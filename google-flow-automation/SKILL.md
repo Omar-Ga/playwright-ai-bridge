@@ -14,24 +14,52 @@ Complete operational reference for automating **Google Labs Flow** (`https://lab
 
 ## 0. Bridge Setup (Prerequisites)
 
-Before any automation, ensure the bridge is live:
+Before any automation, **always check first** whether a compatible browser session is already running before prompting the user to do anything.
 
-1. **Browser must be open** with CDP debugging enabled on port `9222`. Use the scheduled task launch method if not open:
-   ```powershell
-   taskkill /f /im brave.exe
-   schtasks /create /tn "LaunchBraveDebug" /tr "cmd.exe /c d:\AI\launch_brave_rp.bat" /sc once /sd "01/01/2099" /st "00:00" /f
-   schtasks /run /tn "LaunchBraveDebug"
-   Start-Sleep -Seconds 2
-   schtasks /delete /tn "LaunchBraveDebug" /f
-   ```
-2. **Bridge server must be running.** If not, start it in the background:
-   ```powershell
-   Start-Process python -ArgumentList "d:\AI\pw_bridge_server.py" -WindowStyle Hidden
-   ```
-3. **Attach the session:**
-   ```powershell
-   .\pw-bridge.bat attach --cdp=http://localhost:9222
-   ```
+### Step 0a — Check if Browser with CDP is Already Running
+
+First, silently probe the CDP endpoint:
+```powershell
+try {
+    $r = Invoke-WebRequest -Uri "http://localhost:9222/json/version" -TimeoutSec 3 -ErrorAction Stop
+    Write-Host "Browser already running with CDP. Proceeding."
+} catch {
+    Write-Host "No browser with CDP found. Must launch one."
+}
+```
+- **If the request succeeds (HTTP 200):** A browser is already running with remote debugging on port `9222`. Skip to Step 0b immediately — do NOT ask the user to launch a browser.
+- **If the request fails/times out:** No compatible browser is running. Proceed to launch one.
+
+### Step 0a (Fallback) — Launch Browser if NOT Running
+
+Only run this if the CDP check above failed:
+```powershell
+taskkill /f /im brave.exe 2>$null
+schtasks /create /tn "LaunchBraveDebug" /tr "cmd.exe /c d:\AI\launch_brave_rp.bat" /sc once /sd "01/01/2099" /st "00:00" /f
+schtasks /run /tn "LaunchBraveDebug"
+Start-Sleep -Seconds 2
+schtasks /delete /tn "LaunchBraveDebug" /f
+```
+> **IMPORTANT:** The launch scripts open the browser without forcing a specific profile. After launching, **ask the user to select their preferred profile** from the profile picker and confirm before proceeding.
+
+### Step 0b — Ensure Bridge Server is Running
+
+Check if the bridge server is already listening on port `8080`:
+```powershell
+try {
+    $r = Invoke-WebRequest -Uri "http://127.0.0.1:8080/health" -TimeoutSec 3 -ErrorAction Stop
+    Write-Host "Bridge server already running."
+} catch {
+    Write-Host "Starting bridge server..."
+    Start-Process python -ArgumentList "d:\AI\pw_bridge_server.py" -WindowStyle Hidden
+    Start-Sleep -Seconds 2
+}
+```
+
+### Step 0c — Attach the Session
+```powershell
+.\pw-bridge.bat attach --cdp=http://localhost:9222
+```
 
 All subsequent commands use `.\pw-bridge.bat <command>` from `d:\AI`.
 
