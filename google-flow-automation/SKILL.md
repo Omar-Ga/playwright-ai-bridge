@@ -1,365 +1,285 @@
 ---
 name: google-flow-automation
 description: Automate image generation, configuration, and headless downloads on Google Labs Flow using playwright-cli exclusively.
-allowed-tools: Bash(playwright-cli:*)
 ---
 
 # Google Labs Flow Automation Skill
 
-Complete operational reference for automating **Google Labs Flow** (`https://labs.google/fx/tools/flow`) using `playwright-cli` exclusively. No manual Playwright code injection needed for standard workflows.
+## CRITICAL — Read This First
 
-> **CRITICAL:** Always use `pw-bridge.bat` (or `pw-bridge.ps1`) commands via `playwright-cli`. Never attempt to run automation code locally or outside the bridge. Prefer `pw-bridge.bat <command>` or ref-based clicks over scripted code blocks wherever possible.
+- **Everything is done exclusively through the Playwright CLI bridge (`pw-bridge.bat`).**
+- No Python scripts, no `.js` files, no external tools. Pure CLI only.
+- All commands are run from `d:\AI` using `.\pw-bridge.bat <command>`.
+- **Always start from the Flow homepage and create a new project.** Never assume an existing workspace is usable.
 
 ---
 
-## 0. Bridge Setup (Prerequisites)
+## Step 0 — Check for Brave Debugging Session
 
-Before any automation, **always check first** whether a compatible browser session is already running before prompting the user to do anything.
+Before doing anything else, check if Brave is already open with a remote debugging session:
 
-### Step 0a — Check if Browser with CDP is Already Running
-
-First, silently probe the CDP endpoint:
 ```powershell
 try {
-    $r = Invoke-WebRequest -Uri "http://localhost:9222/json/version" -TimeoutSec 3 -ErrorAction Stop
-    Write-Host "Browser already running with CDP. Proceeding."
+    Invoke-WebRequest -Uri "http://localhost:9222/json/version" -TimeoutSec 3 -ErrorAction Stop
+    Write-Output "Brave debug session found. Proceeding."
 } catch {
-    Write-Host "No browser with CDP found. Must launch one."
+    Write-Output "No Brave debug session found."
 }
 ```
-- **If the request succeeds (HTTP 200):** A browser is already running with remote debugging on port `9222`. Skip to Step 0b immediately — do NOT ask the user to launch a browser.
-- **If the request fails/times out:** No compatible browser is running. Proceed to launch one.
 
-### Step 0a (Fallback) — Launch Browser if NOT Running
+- **If it succeeds:** Proceed to attach below.
+- **If it fails:** **Stop and ask the user to open Brave in debug mode.** Do not try to launch it yourself. Say: *"Please open Brave in debug mode. You can do this by running `d:\AI\launch_brave_rp.bat` or starting Brave with `--remote-debugging-port=9222`. Let me know when it's ready."*
 
-Only run this if the CDP check above failed:
+Once the user confirms Brave is running, check the bridge server and attach:
+
 ```powershell
-taskkill /f /im brave.exe 2>$null
-schtasks /create /tn "LaunchBraveDebug" /tr "cmd.exe /c d:\AI\launch_brave_rp.bat" /sc once /sd "01/01/2099" /st "00:00" /f
-schtasks /run /tn "LaunchBraveDebug"
-Start-Sleep -Seconds 2
-schtasks /delete /tn "LaunchBraveDebug" /f
-```
-> **IMPORTANT:** The launch scripts open the browser without forcing a specific profile. After launching, **ask the user to select their preferred profile** from the profile picker and confirm before proceeding.
-
-### Step 0b — Ensure Bridge Server is Running
-
-Check if the bridge server is already listening on port `8080`:
-```powershell
+# Check bridge server
 try {
-    $r = Invoke-WebRequest -Uri "http://127.0.0.1:8080/health" -TimeoutSec 3 -ErrorAction Stop
-    Write-Host "Bridge server already running."
+    Invoke-WebRequest -Uri "http://127.0.0.1:8080/health" -TimeoutSec 3 -ErrorAction Stop
 } catch {
-    Write-Host "Starting bridge server..."
     Start-Process python -ArgumentList "d:\AI\pw_bridge_server.py" -WindowStyle Hidden
     Start-Sleep -Seconds 2
 }
-```
 
-### Step 0c — Attach the Session
-```powershell
+# Attach to Brave
 .\pw-bridge.bat attach --cdp=http://localhost:9222
 ```
 
-All subsequent commands use `.\pw-bridge.bat <command>` from `d:\AI`.
-
 ---
 
-## 1. Initial Project Setup
+## Step 1 — Navigate to Flow & Create a New Project
 
-### Navigate & Create New Project
+**Always navigate fresh to the Flow homepage:**
 ```powershell
 .\pw-bridge.bat goto https://labs.google/fx/tools/flow
-# Wait for page to load, then click New Project:
-.\pw-bridge.bat click "add_2 New project"
-# Wait 3-4 seconds for the project workspace to initialize
-```
-
-**Key selector:** `getByRole('button', { name: 'add_2 New project' })`
-
-### Disable Agent Mode (Always Do This First)
-By default every new project opens in Agent mode. This must be closed:
-```powershell
-# Step 1: Close the Agent chat panel
-.\pw-bridge.bat click "close Close"
-# Step 2: Untick the Agent toggle button
-.\pw-bridge.bat click "Agent"
-```
-
-**Selectors:**
-- Close button: `getByRole('button', { name: 'close Close' })`
-- Agent toggle: `getByRole('button', { name: 'Agent', exact: true })`
-
-### Snapshot to Confirm State
-```powershell
+Start-Sleep -Seconds 3
 .\pw-bridge.bat snapshot
 ```
-Confirm the page shows the prompt textbox with placeholder `"What do you want to create?"` and the settings preset button in the toolbar.
+
+From the snapshot, you will see a list of existing projects. **Always create a new one:**
+```powershell
+.\pw-bridge.bat click "text=New project"
+Start-Sleep -Seconds 4
+.\pw-bridge.bat snapshot
+```
+
+**Disable Agent Mode (if it appears):**
+Google Flow sometimes opens an Agent mode dialog by default. Check the snapshot—if you see `"close Close"` and `"Agent"`, dismiss it:
+```powershell
+.\pw-bridge.bat click "text=Close"
+Start-Sleep -Seconds 1
+.\pw-bridge.bat click "text=Agent"
+Start-Sleep -Seconds 1
+.\pw-bridge.bat snapshot
+```
+
+After this snapshot you should see the main workspace with a prompt textbox at the bottom and an empty media grid.
 
 ---
 
-## 2. Settings Preset Popover
+## Step 2 — Configure Settings (Before Generating)
 
-The toolbar contains a dynamic preset button showing the current mode and settings (e.g., `"Video 🎬 8s crop_16_9 x2"` or `"Banana 2 crop_16_9 x2"`). Click it to open the quick settings popover:
-
+### Image vs Video Mode
+The toolbar at the bottom shows a toggle. By default it's in **Image** mode. You can see the current mode in the snapshot — the active button will be visible. To switch:
 ```powershell
-# The button text changes dynamically. Use snapshot to find the exact ref, then:
-.\pw-bridge.bat click <ref>
-# Example: .\pw-bridge.bat click f21e85
+.\pw-bridge.bat click "image Image"    # Switch to Image mode
+.\pw-bridge.bat click "play_circle Video"  # Switch to Video mode
 ```
 
-After clicking, take a snapshot to see the full settings menu. Close with:
+### Choosing the Image Model
+The current model is shown as a button in the bottom toolbar. Due to unicode prefixes like `??`, always use a robust text locator to open the model dropdown:
+
 ```powershell
-.\pw-bridge.bat press Escape
+.\pw-bridge.bat click "button:has-text('Nano Banana')"  # Click the active model selector button
+Start-Sleep -Seconds 1
+.\pw-bridge.bat snapshot  # A dropdown of model options will appear
 ```
 
----
-
-## 3. Image Generation
-
-### Switch to Image Mode
-```powershell
-.\pw-bridge.bat click "image Image"
-```
-**Selector:** `getByRole('tab', { name: 'image Image' })`
-
-### Image Settings
-| Setting | CLI Command | Options |
+**Available Image Models:**
+| Model Name (in dropdown) | What it is | Best for |
 |---|---|---|
-| Aspect Ratio 16:9 | `.\pw-bridge.bat click "crop_16_9 16:9"` | Also: 4:3, 1:1, 3:4, 9:16 |
-| Aspect Ratio 4:3 | `.\pw-bridge.bat click "crop_landscape 4:3"` | |
-| Aspect Ratio 1:1 | `.\pw-bridge.bat click "crop_square 1:1"` | |
-| Aspect Ratio 3:4 | `.\pw-bridge.bat click "crop_portrait 3:4"` | |
-| Aspect Ratio 9:16 | `.\pw-bridge.bat click "crop_9_16 9:16"` | |
-| Batch Count | `.\pw-bridge.bat click "1x"` / `"x2"` / `"x3"` / `"x4"` | Default: x2 |
-| Model | `.\pw-bridge.bat click "<model_button_ref>"` | See models below |
+| `Nano Banana Pro` | Imagen 3 Pro | Highest quality, most detailed, slowest |
+| `Nano Banana 2` | Imagen 3 | Balanced — the default, great for most use |
+| `Nano Banana 2 Lite` | Imagen 3 Fast | Fastest, lower detail, good for quick tests |
 
-### Image Models (Click the Model Dropdown First)
-- `Banana Pro` → **Imagen 3 Pro** (highest quality, slowest)
-- `Banana 2` → **Imagen 3** (balanced)
-- `Banana 2 Lite` → **Imagen 3 Fast** (fastest, lower quality)
-
-### Generating an Image
+Click your chosen model:
 ```powershell
-# Close settings popover first
-.\pw-bridge.bat press Escape
-
-# Fill the prompt textbox
-.\pw-bridge.bat fill f<ref> "Your creative prompt here"
-
-# Press Enter to trigger generation
-.\pw-bridge.bat press Enter
+.\pw-bridge.bat click "Nano Banana 2 Lite"
 ```
-**Prompt textbox selector:** `getByRole('textbox')` (the one with placeholder `"What do you want to create?"`)
 
-### Monitoring Image Generation Progress
-After pressing Enter, cards appear in the media grid with percentage indicators (e.g., `57%`, `70%`). Poll with snapshots until the percentages are gone:
+### Aspect Ratio
+The aspect ratio button is visible in the toolbar alongside the model button (e.g., `crop_16_9`). After opening the model dropdown you may also see aspect ratio options. Common choices:
 ```powershell
+.\pw-bridge.bat click "crop_16_9"   # 16:9 landscape
+.\pw-bridge.bat click "crop_9_16"   # 9:16 portrait
+.\pw-bridge.bat click "crop_1_1"    # 1:1 square
+```
+
+### Batch Size (How Many Images per Generation)
+The `x2` or `x4` button next to the model selector controls how many images per run:
+```powershell
+.\pw-bridge.bat click "x2"   # Generate 2 images at a time
+.\pw-bridge.bat click "x4"   # Generate 4 images at a time
+```
+
+---
+
+## Step 3 — Enter Prompt & Generate Images
+
+**Enter the prompt using the Progressive Fill Algorithm (Bot Evasion):**
+*Never* use the instantaneous CLI `fill` command. Use `run-code` to simulate human typing with a randomized delay (100-200ms) between characters to avoid triggering "unusual activity" blocks.
+
+```powershell
+.\pw-bridge.bat run-code "async page => { const tb = page.getByRole('textbox').last(); await tb.click({ force: true }); const text = 'A photorealistic wolf howling at a full moon over a misty forest'; let currentText = ''; for (const char of text) { currentText += char; await tb.fill(currentText); const delay = Math.floor(Math.random() * 350) + 50; await page.waitForTimeout(delay); } }"
+Start-Sleep -Seconds 2
+```
+
+**Click Create:**
+Make sure to target the main prompt's create button by using `nth=1` (as `nth=0` often hits the Agent's create button instead).
+```powershell
+.\pw-bridge.bat click "button:has-text('Create') >> nth=1"
+```
+
+**Wait for generation to complete** (typically 15–30 seconds):
+Use short 5-second polling bursts to check for completion instead of one long sleep:
+```powershell
+Start-Sleep -Seconds 5
 .\pw-bridge.bat snapshot
-# Look for absence of "57%" / "70%" etc. and presence of image card links
-# Typical wait: 30-90 seconds for images
-```
-**Completion indicator:** Cards become `link` elements with `/fx/tools/flow/project/<id>/edit/<image_id>` URLs.
-
-### Downloading Images (Headless — No OS Dialog)
-Images require a DOM hook because Flow dynamically creates `<a>` download tags. Inject the hook via a `.js` script file:
-
-**Step 1:** Create the hook script (save to a local `.js` file):
-```js
-async page => {
-  await page.evaluate(() => {
-    window.capturedDownload = null;
-    const originalCreateElement = document.createElement;
-    document.createElement = function(tagName, options) {
-      const el = originalCreateElement.call(document, tagName, options);
-      if (tagName.toLowerCase() === 'a') {
-        const originalClick = el.click;
-        el.click = function() {
-          if (el.href) {
-            fetch(el.href)
-              .then(res => res.blob())
-              .then(blob => {
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                  window.capturedDownload = {
-                    filename: el.download || "download.jpeg",
-                    base64: reader.result.split(';base64,').pop()
-                  };
-                };
-                reader.readAsDataURL(blob);
-              })
-              .catch(err => { window.capturedDownload = { error: err.toString() }; });
-            return; // Block OS dialog
-          }
-          return originalClick.apply(this, arguments);
-        };
-      }
-      return el;
-    };
-  });
-}
+# If still generating (percentage visible), repeat the 5-second sleep and snapshot.
 ```
 
-**Step 2:** Navigate to the image edit URL and run the hook:
+**How to confirm generation is done:**
+In the snapshot, look for image card entries with links like `/fx/tools/flow/project/<project_id>/edit/<image_id>`. When you see those links and no percentage indicators (like `57%`), generation is complete.
+
+**To generate more images (additional prompts):**
+The prompt box automatically clears itself after you click Create. Simply type the next prompt progressively:
 ```powershell
-.\pw-bridge.bat goto https://labs.google/fx/tools/flow/project/<project_id>/edit/<image_id>
-.\pw-bridge.bat run-code --filename="path\to\hook.js"
+.\pw-bridge.bat run-code "async page => { const tb = page.getByRole('textbox').last(); await tb.click({ force: true }); const text = 'Your next prompt here'; let currentText = ''; for (const char of text) { currentText += char; await tb.fill(currentText); const delay = Math.floor(Math.random() * 350) + 50; await page.waitForTimeout(delay); } }"
+Start-Sleep -Seconds 2
+.\pw-bridge.bat click "button:has-text('Create') >> nth=1"
 ```
 
-**Step 3:** Click the Download button and select resolution:
+## Handling Bot Detection ("Unusual Activity")
+If your typing speed or behavior gets flagged by Google Flow, you will see a red error banner on the image card: `"We noticed some unusual activity."`
+If this happens, the most human-like behavior is to simply click the **Retry** button on the failed card. Since `text=Retry` can sometimes be brittle due to inner spans, use the `has-text` selector on the button element:
 ```powershell
-.\pw-bridge.bat click "download Download"
-# For 1K original:
-.\pw-bridge.bat click "1K Original size"
-# For 2K upscaled (triggers backend upscaling — wait up to 60s):
-.\pw-bridge.bat click "2K Upscaled"
-```
-
-**Step 4:** Poll `window.capturedDownload` until populated, then decode base64 and save to disk using a Python wrapper script.
-
----
-
-## 4. Video Generation
-
-### Switch to Video Mode
-```powershell
-.\pw-bridge.bat click "play_circle Video"
-```
-**Selector:** `getByRole('tab', { name: 'play_circle Video' })`
-
-### Video Settings
-| Setting | CLI Command | Options |
-|---|---|---|
-| Aspect Ratio 16:9 | `.\pw-bridge.bat click "crop_16_9 16:9"` | Only 16:9 and 9:16 available for video |
-| Aspect Ratio 9:16 | `.\pw-bridge.bat click "crop_9_16 9:16"` | |
-| Batch Count | `.\pw-bridge.bat click "1x"` / `"x2"` / `"x3"` / `"x4"` | Default: x2 |
-| Duration | `.\pw-bridge.bat click "4s"` / `"6s"` / `"8s"` / `"10s"` | Default: 8s |
-| Sub-tab Frames | `.\pw-bridge.bat click "crop_free Frames"` | For keyframe storyboarding |
-| Sub-tab Ingredients | `.\pw-bridge.bat click "chrome_extension Ingredients"` | For reference assets/characters |
-| Model | See models below | |
-
-### Video Sub-Tabs
-- **Frames** (`crop_free Frames`): Storyboard/keyframe-based generation.
-- **Ingredients** (`chrome_extension Ingredients`): Attach characters, reference images, or assets to influence the video.
-
-### Video Models
-Open the model dropdown (the button showing current model, e.g., `"Omni Flash arrow_drop_down"`):
-```powershell
-.\pw-bridge.bat click "Omni Flash arrow_drop_down"
-```
-
-Available models:
-| Model | Use Case |
-|---|---|
-| `Omni Flash` | Fastest, good quality (default) |
-| `Veo 3.1 - Lite` | Lighter Veo model |
-| `Veo 3.1 - Fast` | Fast Veo generation |
-| `Veo 3.1 - Quality` | Best quality, slowest |
-
-Select a model:
-```powershell
-.\pw-bridge.bat click "volume_up Veo 3.1 - Quality"
-# Or:
-.\pw-bridge.bat click "volume_up Omni Flash"
-```
-
-### Generating a Video
-```powershell
-# Close settings popover
-.\pw-bridge.bat press Escape
-
-# Fill the prompt
-.\pw-bridge.bat fill f<textbox_ref> "Your video prompt here"
-
-# Submit
-.\pw-bridge.bat press Enter
-```
-
-### Monitoring Video Generation Progress
-After triggering, video cards appear in the media grid:
-```powershell
+.\pw-bridge.bat click "button:has-text('Retry')"
+Start-Sleep -Seconds 5
 .\pw-bridge.bat snapshot
-# Look for percentage indicators like "27%", "65%" next to play_circle icons
-# Typical wait: 3-6 minutes for 8s Omni Flash clips
-```
-**Completion indicator:** Percentage text disappears. Cards show `img "Video thumbnail"` inside a link to the edit URL. There is NO download button on the project page — you must click into the video editor URL.
-
-### Downloading Videos (CLI Native — No DOM Hook Needed!)
-
-Videos use **signed CDN URLs** that do NOT require cookies or auth headers. This is the cleanest download method:
-
-**Step 1:** Navigate to the video edit URL (found in the link `href` from the snapshot):
-```powershell
-.\pw-bridge.bat goto https://labs.google/fx/tools/flow/project/<project_id>/edit/<video_id>
-```
-This causes the browser to request the video stream, which gets logged in the network request list.
-
-**Step 2:** Dump the network requests:
-```powershell
-.\pw-bridge.bat requests > requests.txt
-```
-
-**Step 3:** Search for the CDN video URL — it looks like:
-```
-[GET] https://flow-content.google/video/<uuid>?Expires=<timestamp>&KeyName=labs-flow-prod-cdn-key&Signature=<sig> => [206]
-```
-
-**Step 4:** Download directly using PowerShell (no browser session needed):
-```powershell
-Invoke-WebRequest -Uri "<full_signed_cdn_url>" -OutFile "d:\AI\output_video.mp4"
-```
-
-**Why this works:** Flow pre-signs the CDN URL with `Expires`, `KeyName`, and `Signature` query parameters. The signed URL is self-authenticating — any HTTP client can fetch it without cookies. The URL remains valid until the `Expires` timestamp (typically ~8 hours).
-
-### Full Video Download Automation Script
-```powershell
-# 1. Navigate to video editor to trigger stream request
-.\pw-bridge.bat goto https://labs.google/fx/tools/flow/project/<project_id>/edit/<video_id>
-
-# 2. Dump requests
-.\pw-bridge.bat requests > C:\tmp\flow_requests.txt
-
-# 3. Extract the CDN URL (PowerShell)
-$videoUrl = (Get-Content C:\tmp\flow_requests.txt | Select-String "flow-content.google/video" | Select-Object -First 1) -replace '.*\[GET\] (https://flow-content\.google/video/[^\s]+) =>.*', '$1'
-
-# 4. Download
-Invoke-WebRequest -Uri $videoUrl -OutFile "d:\AI\generated_video.mp4"
-
-# 5. Confirm
-Get-Item "d:\AI\generated_video.mp4" | Select-Object Name, Length
+# If still generating, repeat the 5-second sleep and snapshot.
 ```
 
 ---
 
-## 5. Navigation & Project Management
+## Step 4 — Downloading Images (Native CLI Network Intercept)
 
-### Useful CLI Ref Patterns from Snapshots
-| Element | Selector Pattern |
-|---|---|
-| Go Back to projects | `getByRole('button', { name: 'arrow_back Go Back' })` |
-| All Media (sidebar) | `getByRole('button', { name: 'dashboard All Media' })` |
-| Videos (sidebar) | `getByRole('button', { name: 'videocam View videos' })` |
-| Characters (sidebar) | `getByRole('button', { name: 'accessibility_new Characters' })` |
-| Scenes (sidebar) | `getByRole('button', { name: 'movie View scenes' })` |
-| Trash (sidebar) | `getByRole('button', { name: 'delete View Trash' })` |
-| Collapse sidebar | `getByRole('button', { name: 'left_panel_close Collapse' })` |
-| Project title textbox | `getByRole('textbox', { name: 'Editable text' })` |
+This is the key method. **No hooks, no scripts — just Playwright's built-in network capture.**
 
-### Key URL Patterns
-| URL Pattern | Description |
-|---|---|
-| `/fx/tools/flow` | Flow home, shows all projects |
-| `/fx/tools/flow/project/<project_id>` | Project media grid |
-| `/fx/tools/flow/project/<project_id>/edit/<media_id>` | Individual image/video editor |
+### 4a — Download 1K Original (Already in Cache)
+
+When an image is displayed in the grid, the browser has already downloaded it. Run:
+```powershell
+.\pw-bridge.bat requests --static
+```
+
+Scan the output for a `[GET]` request to `https://flow-content.google/image/...`. It will look like:
+```
+94. [GET] https://flow-content.google/image/d4ee01bf-403e-4973-a61f-07f64b4b67c9?Expires=...&Signature=... => [200]
+```
+
+Extract and save it:
+```powershell
+.\pw-bridge.bat response-body 94
+```
+
+The CLI will detect it is a binary image file and **automatically save it to `.playwright-cli\response-TIMESTAMP.jpg`** and print the path. Then move it to the workspace:
+```powershell
+Copy-Item "d:\AI\.playwright-cli\response-TIMESTAMP.jpg" "d:\AI\<destination>\image_1k.jpg"
+```
+
+> There will be one `flow-content.google/image/` request per image displayed on screen. If there are 6 images, there will be 6 such requests. Save each one by running `response-body` on each index.
+
+### 4b — Download 2K Upscaled
+
+The 2K version is generated on-demand by the server. Trigger it with a click:
+
+```powershell
+# Hover over the first image to reveal action buttons
+.\pw-bridge.bat hover "img[alt='Generated image'] >> nth=0"
+Start-Sleep -Seconds 1
+
+# Click the 3-dot More menu — check snapshot for which nth index is correct
+.\pw-bridge.bat click "button:has-text('More') >> nth=2"
+Start-Sleep -Seconds 1
+
+# Hover Download to expand the resolution submenu
+.\pw-bridge.bat hover "text=Download"
+Start-Sleep -Seconds 1
+
+# Click 2K to trigger server-side upscaling
+.\pw-bridge.bat click "text=2K"
+Start-Sleep -Seconds 30
+```
+
+Then check requests for the new `upsampleImage` API call:
+```powershell
+.\pw-bridge.bat requests --static
+```
+
+Look for:
+```
+112. [POST] https://aisandbox-pa.googleapis.com/v1/flow/upsampleImage => [200]
+```
+
+Save the response (it contains the 2K image as Base64 JSON):
+```powershell
+.\pw-bridge.bat response-body 112 > "d:\AI\<destination>\upscale_response.json"
+```
+
+Decode it to a PNG:
+```powershell
+python -c "import json,base64; d=json.load(open('d:/AI/<destination>/upscale_response.json', encoding='utf-16')); open('d:/AI/<destination>/image_2k.png','wb').write(base64.b64decode(d['encodedImage']))"
+```
 
 ---
 
-## 6. Important Notes & Gotchas
+## Step 5 — What to Do After Generation
 
-- **`run-code` with file paths:** Always use `--filename=` flag. Absolute Windows paths work.
-- **Ref IDs are session-scoped:** Refs like `f21e85` change per page load. Always take a fresh `snapshot` to get current refs before clicking.
-- **Video generation is slow:** Expect 3–6 minutes for an 8s clip. The progress percentage (`27%`) stays in that range for most of the wait time before suddenly jumping to completion.
-- **Video CDN URLs expire:** The signed `flow-content.google` URL typically has an 8-hour TTL from the `Expires` parameter. Download immediately after generation to avoid expiry.
-- **Image downloads require DOM hook:** Unlike videos, images use dynamically created anchor tags. The DOM interception hook (Section 3) is required for headless image downloads.
-- **Credit cost for videos:** The settings popover shows credit cost (e.g., `"Generating will use 24 credits"`). 2K image upscaling also consumes additional credits.
-- **Agent Mode:** ALWAYS disable Agent Mode after creating a new project. It interferes with direct prompt input and automated workflows.
+**If the user did NOT specify a download preference in their prompt:**
+Take a snapshot showing the image grid, report back to the user how many images were generated, and ask:
+- *"All 6 images are ready. Would you like me to download them all in 1K, or would you prefer to pick specific ones? I can also download upscaled 2K versions."*
+
+**If the user DID specify a download in their prompt (e.g., "generate 6 images and download them"):**
+Download all images automatically using the 1K network intercept method above and move them to the appropriate workspace directory without asking. Report the saved file paths when done.
+
+---
+
+## Quick Reference — Snapshot Landmarks
+
+Use `.\pw-bridge.bat snapshot` at any point to get your bearings. Here is what to look for:
+
+| What you see in the snapshot | What it means |
+|---|---|
+| `button "add_2 New project"` | You're on the Flow homepage |
+| `button "close Close"` + `button "Agent"` | Agent mode dialog is open — dismiss it |
+| `textbox` with placeholder `"What do you want to create?"` | Ready to type a prompt |
+| `button "add_2 Create"` is enabled | Prompt is filled, ready to generate |
+| `button "arrow_forward Create" [disabled]` | Prompt box is empty |
+| Image cards with `/edit/<image_id>` links | Generation is complete |
+| Percentage numbers like `57%` in cards | Generation is still in progress — wait |
+| `button "download Download"` | You are in the single-image editor view |
+
+---
+
+## Quick Reference — Common CLI Commands
+
+```powershell
+.\pw-bridge.bat snapshot                      # See everything on screen
+.\pw-bridge.bat goto <url>                   # Navigate to a URL
+.\pw-bridge.bat click "<text>"               # Click a button or link by text
+.\pw-bridge.bat fill "textbox" "<text>"      # Fill the prompt input
+.\pw-bridge.bat hover "<text>"               # Hover to reveal hidden menus
+.\pw-bridge.bat requests                     # List all network requests
+.\pw-bridge.bat response-body <index>        # Save a network response to disk
+.\pw-bridge.bat find "<text>"                # Search snapshot for specific text
+```
