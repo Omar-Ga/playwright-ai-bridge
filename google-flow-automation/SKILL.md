@@ -171,75 +171,87 @@ Start-Sleep -Seconds 5
 
 ---
 
-## Step 4 — Downloading Images (Native CLI Network Intercept)
+## Step 4 — Downloading Images (Browser Context JS Injection)
 
-This is the key method. **No hooks, no scripts — just Playwright's built-in network capture.**
+This method is the most reliable way to download generated images directly from the browser context, bypassing any network logs or session interception problems. It uses Playwright's `run-code` to inject a JavaScript snippet that fetches the active image URLs, converts them to Base64, and returns them to PowerShell to be saved.
 
-### 4a — Download 1K Original (Already in Cache)
+### 4a — Download Original 1K Images (From the Grid)
 
-When an image is displayed in the grid, the browser has already downloaded it. Run:
-```powershell
-.\pw-bridge.bat requests --static
-```
-
-Scan the output for a `[GET]` request to `https://flow-content.google/image/...`. It will look like:
-```
-94. [GET] https://flow-content.google/image/d4ee01bf-403e-4973-a61f-07f64b4b67c9?Expires=...&Signature=... => [200]
-```
-
-Extract and save it:
-```powershell
-.\pw-bridge.bat response-body 94
-```
-
-The CLI will detect it is a binary image file and **automatically save it to `.playwright-cli\response-TIMESTAMP.jpg`** and print the path. Then move it to the workspace:
-```powershell
-Copy-Item "d:\AI\.playwright-cli\response-TIMESTAMP.jpg" "d:\AI\<destination>\image_1k.jpg"
-```
-
-> There will be one `flow-content.google/image/` request per image displayed on screen. If there are 6 images, there will be 6 such requests. Save each one by running `response-body` on each index.
-
-### 4b — Download 2K Upscaled
-
-The 2K version is generated on-demand by the server. Trigger it with a click:
+When the generated images are displayed in the grid, they are immediately available to be extracted. Run the following PowerShell block to execute the injected JavaScript and safely decode and save the files:
 
 ```powershell
-# Hover over the first image to reveal action buttons
+$script = @"
+async page => {
+    const urls = [];
+    const imgs = await page.locator('img[alt=\"Generated image\"]').all();
+    for (let i=0; i<imgs.length; i++) {
+        urls.push(await imgs[i].getAttribute('src'));
+    }
+    const b64s = [];
+    for (const u of urls) {
+        const b64 = await page.evaluate(async (url) => {
+            try {
+                const r = await fetch(url);
+                const blob = await r.blob();
+                return await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+            } catch(e) { return 'ERROR:' + e.message; }
+        }, u);
+        b64s.push(b64);
+    }
+    return b64s.join('|||');
+}
+"@
+
+# Run the Playwright JS injection
+$out = .\pw-bridge.bat run-code $script
+
+# Strip out Playwright CLI formatting logs to isolate the base64 result
+$out = $out -replace '(?s)### Ran Playwright code.*', ''
+$out = $out -replace '(?s)### Result\s*', ''
+$parts = $out.Trim() -split '\|\|\|'
+
+# Decode and save each image to the target directory
+for ($i = 0; $i -lt $parts.Count; $i++) {
+    $b64 = $parts[$i] -replace '["\s]', ''
+    $pad = 4 - ($b64.Length % 4)
+    if ($pad -ne 4) { $b64 += '=' * $pad }
+    
+    if ($b64.Length -gt 100 -and $b64 -notmatch '^ERROR') {
+        $dest = "d:\AI\<destination>\image_$i.jpg"
+        [IO.File]::WriteAllBytes($dest, [Convert]::FromBase64String($b64))
+        Write-Host "Saved: $dest"
+    }
+}
+```
+
+### 4b — Download 2K Upscaled Images
+
+If you specifically need 2K upscaled images, you must first tell the server to upscale them by using the UI button. 
+
+```powershell
+# Hover over the specific image (e.g., the first one)
 .\pw-bridge.bat hover "img[alt='Generated image'] >> nth=0"
 Start-Sleep -Seconds 1
 
-# Click the 3-dot More menu — check snapshot for which nth index is correct
+# Click the More menu (check snapshot for exact index, usually nth=2 for the first image)
 .\pw-bridge.bat click "button:has-text('More') >> nth=2"
 Start-Sleep -Seconds 1
 
-# Hover Download to expand the resolution submenu
+# Expand the Download menu
 .\pw-bridge.bat hover "text=Download"
 Start-Sleep -Seconds 1
 
-# Click 2K to trigger server-side upscaling
+# Click 2K to trigger the upscale
 .\pw-bridge.bat click "text=2K"
-Start-Sleep -Seconds 30
+Start-Sleep -Seconds 20
 ```
 
-Then check requests for the new `upsampleImage` API call:
-```powershell
-.\pw-bridge.bat requests --static
-```
-
-Look for:
-```
-112. [POST] https://aisandbox-pa.googleapis.com/v1/flow/upsampleImage => [200]
-```
-
-Save the response (it contains the 2K image as Base64 JSON):
-```powershell
-.\pw-bridge.bat response-body 112 > "d:\AI\<destination>\upscale_response.json"
-```
-
-Decode it to a PNG:
-```powershell
-python -c "import json,base64; d=json.load(open('d:/AI/<destination>/upscale_response.json', encoding='utf-16')); open('d:/AI/<destination>/image_2k.png','wb').write(base64.b64decode(d['encodedImage']))"
-```
+Once the upscaling completes, the UI may show a notification. You can then run the exact same `$script` powershell block from **Step 4a** to fetch the active images directly from the browser!
 
 ---
 
