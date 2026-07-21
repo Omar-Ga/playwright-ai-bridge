@@ -128,10 +128,10 @@ The `x2` or `x4` button next to the model selector controls how many images per 
 ## Step 3 — Enter Prompt & Generate Images
 
 **Enter the prompt using the Progressive Fill Algorithm (Bot Evasion):**
-*Never* use the instantaneous CLI `fill` command. Use `run-code` to simulate human typing with a randomized delay (100-200ms) between characters to avoid triggering "unusual activity" blocks.
+*Never* use the instantaneous CLI `fill` command. Use `run-code` to simulate human typing with a randomized delay (50-150ms) between characters to avoid triggering "unusual activity" blocks.
 
 ```powershell
-.\pw-bridge.bat run-code "async page => { const tb = page.getByRole('textbox').last(); await tb.click({ force: true }); const text = 'A photorealistic wolf howling at a full moon over a misty forest'; let currentText = ''; for (const char of text) { currentText += char; await tb.fill(currentText); const delay = Math.floor(Math.random() * 350) + 50; await page.waitForTimeout(delay); } }"
+.\pw-bridge.bat run-code "async page => { const tb = page.getByRole('textbox').last(); await tb.click({ force: true }); const text = 'A photorealistic wolf howling at a full moon over a misty forest'; let currentText = ''; for (const char of text) { currentText += char; await tb.fill(currentText); const delay = Math.floor(Math.random() * 100) + 50; await page.waitForTimeout(delay); } }"
 Start-Sleep -Seconds 2
 ```
 
@@ -155,7 +155,7 @@ In the snapshot, look for image card entries with links like `/fx/tools/flow/pro
 **To generate more images (additional prompts):**
 The prompt box automatically clears itself after you click Create. Simply type the next prompt progressively:
 ```powershell
-.\pw-bridge.bat run-code "async page => { const tb = page.getByRole('textbox').last(); await tb.click({ force: true }); const text = 'Your next prompt here'; let currentText = ''; for (const char of text) { currentText += char; await tb.fill(currentText); const delay = Math.floor(Math.random() * 350) + 50; await page.waitForTimeout(delay); } }"
+.\pw-bridge.bat run-code "async page => { const tb = page.getByRole('textbox').last(); await tb.click({ force: true }); const text = 'Your next prompt here'; let currentText = ''; for (const char of text) { currentText += char; await tb.fill(currentText); const delay = Math.floor(Math.random() * 100) + 50; await page.waitForTimeout(delay); } }"
 Start-Sleep -Seconds 2
 .\pw-bridge.bat click "button:has-text('Create') >> nth=1"
 ```
