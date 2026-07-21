@@ -7,9 +7,10 @@ description: Automate image generation, configuration, and headless downloads on
 
 ## CRITICAL — Read This First
 
-- **Everything is done exclusively through the Playwright CLI bridge (`pw-bridge.bat`).**
-- No Python scripts, no `.js` files, no external tools. Pure CLI only.
-- All commands are run from `d:\AI` using `.\pw-bridge.bat <command>`.
+- **STRICT COMPLIANCE REQUIRED:** You must strictly follow the instructions in this skill. Under no circumstances should you deviate from these steps or try to invent alternative workflow methods.
+- **NO EXTERNAL CODE OR SCRIPTS:** You must never write or run custom Python/JS code or external scripts to interact with Google Flow on your own. Everything must be done exclusively through the Playwright CLI bridge (`pw-bridge.bat`).
+- **POWERSHELL PARSING WORKAROUND:** When executing complex or multiline JavaScript blocks (such as the image downloader in Step 4), **do not pass the raw JS string as a command-line argument** to `pw-bridge.bat`. PowerShell's argument parsing will break. Instead, always write the JS code to a temporary file (e.g., `extract.js`) first, and run it using the `--filename` option: `.\pw-bridge.bat --raw run-code --filename="path/to/extract.js"`.
+- All commands must be run from `d:\AI` using `.\pw-bridge.bat <command>`.
 - **Always start from the Flow homepage and create a new project.** Never assume an existing workspace is usable.
 
 ---
